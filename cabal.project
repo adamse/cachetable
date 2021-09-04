@@ -1,0 +1,9 @@
+
+packages: cachetable.cabal
+
+package *
+  documentation: true
+  haddock-hyperlink-source: true
+
+package cachetable
+  ghc-options: -Werror -Wall -Wno-name-shadowing

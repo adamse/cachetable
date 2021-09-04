@@ -1,0 +1,45 @@
+cabal-version:      2.4
+name:               cachetable
+version:            0.1.0.0
+
+-- A short (one-line) description of the package.
+-- synopsis:
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+
+-- The license under which the package is released.
+-- license:
+author:             Adam Sandberg Ericsson
+maintainer:         adam@sandbergericsson.se
+
+-- A copyright notice.
+-- copyright:
+-- category:
+extra-source-files: CHANGELOG.md
+
+library
+    build-depends:
+      base,
+      primitive,
+      hashable >= 1.3.2.0 && < 1.4,
+      random >= 1.2.0 && < 1.3,
+
+    exposed-modules:
+      Cachetable
+      Cachetable.Internal
+
+    hs-source-dirs: .
+    default-language: Haskell2010
+
+test-suite cachetable-tests
+    type: exitcode-stdio-1.0
+    hs-source-dirs: test
+    main-is: Test1.hs
+    build-depends:    
+      base ^>=4.14.2.0,
+      cachetable,
+    default-language: Haskell2010

@@ -1,0 +1,6 @@
+cradle:
+  cabal:
+    - path: test
+      component: "cachetable:cachetable-tests"
+    - path: .
+      component: "lib:cachetable"
