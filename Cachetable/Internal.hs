@@ -2,6 +2,9 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BlockArguments #-}
+
+{-# OPTIONS_GHC -funbox-strict-fields #-}
+
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- {-# OPTIONS_GHC -ddump-cmm -ddump-to-file #-}
@@ -18,10 +21,15 @@ import Data.Hashable
 import System.Random
 import Data.Tuple (swap)
 import Control.Exception (assert)
+import Data.Foldable (toList)
+import Data.Traversable (for)
+import Data.List (unfoldr)
+import Control.Monad (when)
+import Text.Printf (printf)
+import GHC.Stack (HasCallStack)
 
--- | A salt to use for hashing.
---
 -- TODO: how to choose a good one?
+-- | A salt to use for hashing.
 hashSalt :: Int
 hashSalt = 143898437
 {-# inline hashSalt #-}
@@ -34,7 +42,12 @@ data Entry key val
     { entry_key :: !key
     , entry_value :: !val
     }
-  deriving (Show)
+  deriving (Show, Eq)
+
+-- | Is the 'Entry' an 'EntryPresent'
+isEntryPresent :: Entry a b -> Bool
+isEntryPresent EntryPresent{} = True
+isEntryPresent _ = False
 
 -- | A cache table (hash table but keys are allowed to dissappear).
 --
@@ -62,12 +75,66 @@ showCachetable
   -> m String
 showCachetable Cachetable{..} = do
   arr <- freezeArray ct_storage 0 (ct_buckets * ct_bucketSlots)
+  generator <- readMutVar ct_generator
   pure (unlines
     [ "Cachetable"
     , "  { storage = " <> show arr
     , "  , buckets = " <> show ct_buckets
     , "  , bucketSlots = " <> show ct_bucketSlots
+    , "  , generator = " <> show generator
+    , "  }"
     ])
+
+-- | Internal invariants.
+--
+-- - A bucket should only have 'EntryNotPresent' entires at the end.
+-- - A 'EntryPresent' in a bucket should have a key that hashes to the bucket
+--   index.
+-- - A bucket should only have one entry with the same key
+--
+checkInvariants
+  :: forall key val m . (HasCallStack, PrimMonad m, Hashable key, Eq key)
+  => Cachetable (PrimState m) key val
+  -> m ()
+checkInvariants Cachetable{..} = do
+  arr <- freezeArray ct_storage 0 (ct_buckets * ct_bucketSlots)
+  let entries = toList arr
+  let
+    buckets =
+      unfoldr (\mrest -> case splitAt ct_bucketSlots <$> mrest of
+        Nothing -> Nothing
+        Just (bucket, []) -> Just (bucket, Nothing)
+        Just (bucket, rest) -> Just (bucket, Just rest))
+      (Just entries)
+
+  _ <- for (zip [0..] buckets) \(bucketIdx, bucket) ->
+
+    for (zip [0..] bucket) \(entryIdx, entry) -> case entry of
+      EntryNotPresent -> do
+        let (_, rest) = splitAt entryIdx bucket
+        -- A bucket should only have 'EntryNotPresent' entires at the end.
+        when (any isEntryPresent rest)
+          (error "EntryPresent after EntryNotPresent")
+
+      EntryPresent{entry_key = key} -> do
+        let hash = hashWithSalt hashSalt key
+        let bucketIdx' = hash `mod` ct_buckets
+
+        -- A 'EntryPresent' in a bucket should have a key that hashes to the
+        -- bucket index.
+        when (bucketIdx /= bucketIdx')
+          (error
+            (printf "bucket index does not agree, %d, %d" bucketIdx bucketIdx'))
+
+        -- A bucket should only have one entry with the same key
+        let
+          sameKey entry = case entry of
+            EntryNotPresent -> False
+            EntryPresent{..} -> key == entry_key
+        let same = filter sameKey bucket
+        when (map entry_key same /= [key])
+          (error "multiple entries with the same key")
+  pure ()
 
 -- | Create a new 'Cachetable'.
 --
