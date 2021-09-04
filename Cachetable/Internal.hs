@@ -28,12 +28,6 @@ import Control.Monad (when)
 import Text.Printf (printf)
 import GHC.Stack (HasCallStack)
 
--- TODO: how to choose a good one?
--- | A salt to use for hashing.
-hashSalt :: Int
-hashSalt = 143898437
-{-# inline hashSalt #-}
-
 -- TODO: can we unbox this into the storage?
 -- | Container for an entry in the cache.
 data Entry key val
@@ -63,8 +57,10 @@ data Cachetable s key val = Cachetable
     -- ^ number of buckets
   , ct_bucketSlots :: !Int
     -- ^ slots per bucket
+  , ct_salt :: !Int
+    -- ^ salt to use for hashing
   , ct_generator :: MutVar s StdGen
-    -- ^ random number generator for use when replacing something in the cache
+    -- ^ random number generator to use when replacing something in the cache
     -- when inserting
   }
 
@@ -81,6 +77,7 @@ showCachetable Cachetable{..} = do
     , "  { storage = " <> show arr
     , "  , buckets = " <> show ct_buckets
     , "  , bucketSlots = " <> show ct_bucketSlots
+    , "  , salt = " <> show ct_salt
     , "  , generator = " <> show generator
     , "  }"
     ])
@@ -117,7 +114,7 @@ checkInvariants Cachetable{..} = do
           (error "EntryPresent after EntryNotPresent")
 
       EntryPresent{entry_key = key} -> do
-        let hash = hashWithSalt hashSalt key
+        let hash = hashWithSalt ct_salt key
         let bucketIdx' = hash `mod` ct_buckets
 
         -- A 'EntryPresent' in a bucket should have a key that hashes to the
@@ -154,12 +151,14 @@ new buckets bucketSlots = do
   storage <- newArray (buckets * bucketSlots) EntryNotPresent
 
   generator <- unsafeIOToPrim newStdGen
+  (salt, generator) <- pure (uniform generator)
   generator <- newMutVar generator
 
   pure Cachetable
     { ct_storage = storage
     , ct_buckets = buckets
     , ct_bucketSlots = bucketSlots
+    , ct_salt = salt
     , ct_generator = generator
     }
 
@@ -171,7 +170,7 @@ lookup
     -- ^ Key to find.
   -> m (Maybe val)
 lookup Cachetable{..} !key = do
-  let !hash = hashWithSalt hashSalt key
+  let !hash = hashWithSalt ct_salt key
   let !bucket = hash `mod` ct_buckets
   let !bucket_start = bucket * ct_bucketSlots
   let !bucket_end = (bucket + 1) * ct_bucketSlots
@@ -202,7 +201,7 @@ insert
   -> m Bool
     -- ^ @True@ if something was replaced when inserting.
 insert Cachetable{..} !key !val = do
-  let !hash = hashWithSalt hashSalt key
+  let !hash = hashWithSalt ct_salt key
   let !bucket = hash `mod` ct_buckets
   let !bucket_start = bucket * ct_bucketSlots
   let !bucket_end = (bucket + 1) * ct_bucketSlots
